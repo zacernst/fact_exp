@@ -2,25 +2,80 @@
 Atomic facts.
 
 """
+from __future__ import annotations
 
 import collections
 from datetime import datetime
 from dataclasses import dataclass
+import hashlib
 import inspect
 import logging
 import textwrap
 from typing import Any, List, Optional, Type
 from uuid import UUID, uuid4
-
 import yaml
 
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 _MESSAGE_TYPE_CLS_LIST_DICT: dict = collections.defaultdict(list)
 _MESSAGE_TYPE_FUNCTION_TO_DICT: dict = collections.defaultdict(dict)
 
 __MISSING__ = "__MISSING__"
+
+
+
+class FactStore:
+    """
+    Superclass for all back-end storage engines.
+    """
+    def __init__(self, *args, **kwargs):
+        self.feature_functions = {}
+
+    def put(self, _):
+        """
+        Abstract base class
+        """
+        raise NotImplementedError("`put` method must be implemented.")
+
+    def __call__(self, fact: Fact):
+        '''
+        Wraps the `put` methods so we can do callbacks and side-effects.
+        '''
+        self.put(fact)
+        # Do something
+        # Call updates on dependent features and relationships
+
+
+class MemoryFactStore(FactStore):
+    """
+    Fact store in-memory.
+    """
+
+    def __init__(self):
+        self.attributes: List[AttributeFact] = []
+        self.relationships: List[RelationshipFact] = []
+        super().__init__()
+
+    def _put_attribute_fact(self, attribute_fact: AttributeFact):
+        """
+        Won't be used by the user.
+        """
+        self.attributes.append(attribute_fact)
+
+    def _put_relationship_fact(self, relationship_fact: RelationshipFact):
+        """
+        Also won't be used.
+        """
+        self.relationships.append(relationship_fact)
+
+    def put(self, fact: Fact):
+        if isinstance(fact, RelationshipFact):
+            self._put_relationship_fact(fact)
+        elif isinstance(fact, AttributeFact):
+            self._put_attribute_fact(fact)
+        else:
+            raise TypeError("Tried to put a non-Fact into the store.")
 
 
 class Message:
@@ -100,6 +155,7 @@ class Fact:
     """
 
 
+@dataclass
 class AttributeFact(Fact):
     """
     The main class.
@@ -134,12 +190,27 @@ class AttributeFact(Fact):
         )
         return s
 
+    def __hash__(self):
+        hash_str = "__".join(
+            [
+                self.entity_type.__class__.__name__,
+                str(self.entity_id),
+                self.attribute.__class__.__name__,
+                str(self.value),
+            ]
+        )
+        hexdigest = hashlib.md5(bytes(hash_str, encoding="utf8")).hexdigest()
+        return int(hexdigest, 16)
+
+    def __eq__(self, other):
+        return self.__hash__() == other.__hash__()
+
     @property
-    def hash(self):
+    def hash(self) -> int:
         """
         Poor hash
         """
-        return "fake_hash"
+        return self.__hash__()
 
 
 class RelationshipFact(Fact):
@@ -182,6 +253,13 @@ def name_length_plus_user_id(user_id=None, user_name=None):
     return len(user_name) + user_id
 
 
+def inductive_attribute(f):
+    setattr(f, '_attribute_function', True)
+    setattr(f, '_function_name', f.__name__)
+    setattr(f, '_function_signature', inspect.signature(f))
+    return f
+
+
 def attribute(f):
     """
     Decorator for attribute functions.
@@ -201,8 +279,10 @@ def attribute(f):
         globals()[message_type]
         for message_type in function_config["message_types"]
     ]
-    attribute_cls = globals()[function_config["attribute"]]
-    entity_type = globals()[function_config["entity_type"]]
+
+    entity_type_name, attribute_cls_name = f.__name__.split("__")
+    entity_type = globals()[entity_type_name]
+    attribute_cls = globals()[attribute_cls_name]
 
     def inner(**inner_kwargs):
         intersected_kwargs = {
@@ -226,11 +306,15 @@ def attribute(f):
             "entity_type": entity_type,
         }
 
+    # Tag the function as an attribute function
+    setattr(inner, '_attribute_function', True)
+    setattr(inner, '_function_name', f.__name__)
+    setattr(inner, '_function_signature', inspect.signature(f))
     return inner
 
 
 @attribute
-def first_name(user_name: str = ""):
+def Person__FirstName(user_name: str = ""):
     """
     Gets the first token in the string.
 
@@ -238,11 +322,17 @@ def first_name(user_name: str = ""):
     config:
         message_types:
             UserTableMessageType: [cdc, columns, id]
-        attribute: FirstName
-        entity_type: Person
     """
     token_list = user_name.strip().split(" ")
     return token_list[0] if len(token_list) > 0 else None
+
+
+@inductive_attribute
+def Person__FirstNameCaps(Person__FirstName: str = ''):
+    '''
+    hi
+    '''
+    return Person__FirstName.upper()
 
 
 @dataclass
@@ -294,48 +384,86 @@ class MessageRoundabout:
         return message_type_list[0]
 
 
-if __name__ == "__main__":
-    message_roundabout = MessageRoundabout()
-    ROUTE = Route(
-        message_type=UserTableMessageType,
-        keypath=[
-            "metadata",
-            "table",
-        ],
-        value_match="users",
-    )
-    message_roundabout.add_route(ROUTE)
-    SAMPLE_MESSAGE = {
-        "cdc": {
-            "columns": {"id": 4, "name": "Bob Smith", "age": 48, "state": "FL"}
-        },
-        "metadata": {"foo": 1, "bar": 2, "table": "users"},
-    }
+class Session:
+    '''
+    Holds state and so on.
+    '''
+    def __init__(self, fact_store_cls: FactStore=MemoryFactStore, fact_store_kwargs: dict=None):
+        self.fact_store = fact_store_cls(**(fact_store_kwargs or {}))
 
-    # Route sample message to identify its type.
-    message_type = message_roundabout(SAMPLE_MESSAGE)
-    logging.debug(message_type)
-    logging.debug(_MESSAGE_TYPE_CLS_LIST_DICT[message_type])
-    kwargs = message_type().get_kwargs(SAMPLE_MESSAGE)
-    logging.debug(kwargs)
-    for attribute_function in _MESSAGE_TYPE_CLS_LIST_DICT[message_type]:
-        value, attribute_cls = attribute_function(**kwargs)
-        logging.debug(value)
-        id_keypath = _MESSAGE_TYPE_FUNCTION_TO_DICT[attribute_function][
-            message_type
-        ]["id_keypath"]
-        entity_type = _MESSAGE_TYPE_FUNCTION_TO_DICT[attribute_function][
-            message_type
-        ]["entity_type"]
-        id_value = DictAttributeMapping.lookup_keypath(
-            SAMPLE_MESSAGE, id_keypath
+    def __enter__(self, *args, **kwargs):
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        pass
+
+
+if __name__ == "__main__":
+    with Session(fact_store_cls= MemoryFactStore) as session:
+        message_roundabout = MessageRoundabout()
+        ROUTE = Route(
+            message_type=UserTableMessageType,
+            keypath=[
+                "metadata",
+                "table",
+            ],
+            value_match="users",
         )
-        logging.debug(id_value)
-        print(entity_type)
-        _attribute = AttributeFact(
-            entity_type=entity_type,
-            entity_id=id_value,
-            attribute=attribute_cls,
-            value=value,
-        )
-        print(_attribute)
+        message_roundabout.add_route(ROUTE)
+        SAMPLE_MESSAGE = {
+            "cdc": {
+                "columns": {"id": 4, "name": "Bob Smith", "age": 48, "state": "FL"}
+            },
+            "metadata": {"foo": 1, "bar": 2, "table": "users"},
+        }
+
+        # Route sample message to identify its type.
+        message_type = message_roundabout(SAMPLE_MESSAGE)
+        logging.debug(message_type)
+        logging.debug(_MESSAGE_TYPE_CLS_LIST_DICT[message_type])
+        kwargs = message_type().get_kwargs(SAMPLE_MESSAGE)
+        logging.debug(f"message_type kwargs: {kwargs}")
+        for attribute_function in _MESSAGE_TYPE_CLS_LIST_DICT[message_type]:
+            value, attribute_cls = attribute_function(**kwargs)
+            logging.debug(value)
+            id_keypath = _MESSAGE_TYPE_FUNCTION_TO_DICT[attribute_function][
+                message_type
+            ]["id_keypath"]
+            entity_type = _MESSAGE_TYPE_FUNCTION_TO_DICT[attribute_function][
+                message_type
+            ]["entity_type"]
+            id_value = DictAttributeMapping.lookup_keypath(
+                SAMPLE_MESSAGE, id_keypath
+            )
+            logging.debug(id_value)
+            print(entity_type)
+            _attribute = AttributeFact(
+                entity_type=entity_type,
+                entity_id=id_value,
+                attribute=attribute_cls,
+                value=value,
+            )
+            print(_attribute)
+            session.fact_store(_attribute)
+
+    function_update_callback_dict = collections.defaultdict(list)
+
+    attribute_function_dict = {}
+    obj_names = globals().keys()
+    all_obj_dict = {obj_name: globals()[obj_name] for obj_name in obj_names}
+    for obj_name, obj in all_obj_dict.items():
+        if hasattr(obj, '_attribute_function') and obj._attribute_function:
+            attribute_function_dict[obj_name] = obj
+            logging.info(f'Found atrribute function: {obj_name}')
+            logging.debug(f'Signature: {inspect.signature(obj)}')
+            logging.debug(f'function name: {obj._function_name}')
+            logging.debug(f'signature: {obj._function_signature}')
+
+    for func_name, func in attribute_function_dict.items():
+        func_name = func._function_name
+        for parameter_name, parameter in func._function_signature.parameters.items():
+            if parameter_name in attribute_function_dict.keys():
+                logging.debug(parameter_name)
+                # Set callback whenever function 'parameter_name' is called
+                function_update_callback_dict[attribute_function_dict[parameter_name]].append(func)
+    print(function_update_callback_dict)
