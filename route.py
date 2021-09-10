@@ -53,4 +53,3 @@ class MessageRoundabout:
         ), "Message matched more than one route."
         assert len(message_type_list) > 0, "Message matched no routes."
         return message_type_list[0]
-

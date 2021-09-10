@@ -1,14 +1,18 @@
-'''
+"""
 facts
-'''
+"""
 from fact import Fact, AttributeFact, RelationshipFact
 from entities import Person, EntityType
 from attribute import Attribute, FirstName, FirstNameCaps
-from fact import AttributeFact, RelationshipFact
+from fact import AttributeFact
+from session import Session
+from typing import List
 
 import logging
 
-__MISSING__ = '__MISSING__'
+__MISSING__ = "__MISSING__"
+
+
 def get_entity_parameters(func):
     """
     Inspect the signature etc.
@@ -36,6 +40,7 @@ class FactStore:
     def __init__(self, feature_functions: dict = None):
         self.feature_functions = feature_functions or {}
         self.fact_store = None
+        self.session: Session = None
 
     def put(self, _):
         """
@@ -49,12 +54,16 @@ class FactStore:
         """
         self.put(fact)
         # Call updates on dependent features and relationships
-        callbacks = self.session.callback_dict[
-            (
-                fact.entity_type,
-                fact.attribute,
-            )
-        ] if isinstance(fact, AttributeFact) else []
+        callbacks = (
+            self.session.callback_dict[
+                (
+                    fact.entity_type,
+                    fact.attribute,
+                )
+            ]
+            if isinstance(fact, AttributeFact)
+            else []
+        )
         for callback in callbacks:
             entity_parameters = get_entity_parameters(callback)
             callback_attrs = {
@@ -104,6 +113,9 @@ class FactStore:
         attribute: Attribute = None,
         entity_id: str = None,
     ):
+        '''
+        Calls ``_get_attribute``, which has to be provided in the child class.
+        '''
         return self._get_attribute(
             entity_type=entity_type, attribute=attribute, entity_id=entity_id
         )
@@ -133,13 +145,11 @@ class MemoryFactStore(FactStore):
         self.relationships.append(relationship_fact)
 
     def put(self, fact: Fact):
-        import pdb; pdb.set_trace()
-        if 'RelationshipFact' in fact.__class__.__name__:
+        if "RelationshipFact" in fact.__class__.__name__:
             self._put_relationship_fact(fact)
-        elif 'AttributeFact' in fact.__class__.__name__:
+        elif "AttributeFact" in fact.__class__.__name__:
             self._put_attribute_fact(fact)
         else:
-            import pdb; pdb.set_trace()
             raise TypeError("Tried to put a non-Fact into the store.")
 
     def _get_attribute(
@@ -163,4 +173,3 @@ class MemoryFactStore(FactStore):
             yield attribute
         for relationship in self.relationships:
             yield relationship
-
