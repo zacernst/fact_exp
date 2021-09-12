@@ -10,8 +10,8 @@ import logging
 from typing import Any, List, Type
 from uuid import UUID
 
-from fact_store import FactStore, MemoryFactStore
 from fact import AttributeFact, RelationshipFact
+from fact_store import FactStore, MemoryFactStore
 from entities import *
 from attribute import *
 from attribute import _MESSAGE_TYPE_CLS_LIST_DICT, _MESSAGE_TYPE_FUNCTION_TO_DICT
@@ -54,7 +54,7 @@ class Session:
 
     def __init__(
         self,
-        fact_store_cls: Type[FactStore] = MemoryFactStore,
+        fact_store_cls: Type = None,
         fact_store_kwargs: dict = None,
         message_roundabout: MessageRoundabout = None,
     ):

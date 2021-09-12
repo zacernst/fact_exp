@@ -5,8 +5,7 @@ from fact import Fact, AttributeFact, RelationshipFact
 from entities import Person, EntityType
 from attribute import Attribute, FirstName, FirstNameCaps
 from fact import AttributeFact
-from session import Session
-from typing import List
+from typing import Any, List
 
 import logging
 
@@ -40,7 +39,7 @@ class FactStore:
     def __init__(self, feature_functions: dict = None):
         self.feature_functions = feature_functions or {}
         self.fact_store = None
-        self.session: Session = None
+        self.session: Any = None
 
     def put(self, _):
         """

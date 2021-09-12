@@ -1,0 +1,22 @@
+UserTableMessageType:
+  argument_mapping:
+    user_id:
+    - cdc
+    - columns
+    - id
+    user_name:
+    - cdc
+    - columns
+    - name
+    state:
+    - cdc
+    - columns
+    - state
+  relationship_mapping:
+    LivesIn:
+      source:
+        entity_type: Person
+        entity_id_keypath: user_id
+      target:
+        entity_type: State
+        entity_id_keypath: state
