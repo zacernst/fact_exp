@@ -7,8 +7,7 @@ import ply.yacc as yacc
 
 
 tokens = (
-    "NUMBER",
-    "MATCH",
+    "NUMBER", "MATCH",
     "PLUS",
     "MINUS",
     "COMMA",
@@ -304,6 +303,35 @@ class RelationshipList:
 
     def __repr__(self):
         return ", ".join([str(i) for i in self.relationship_list])
+
+
+class Match:
+    '''MATCH pattern without a WHERE clause'''
+    def __init__(self, pattern):
+        self.pattern = pattern
+
+
+def p_match_clause(p):
+    '''
+    match_clause : MATCH pattern
+    '''
+    return Match(p[2])
+
+
+class Pattern:
+    '''A set of constraints without a WHERE clause'''
+    def __init__(self, pattern_list: list = None):
+        self.pattern_list = pattern_list or []
+
+
+def p_pattern(p):  # Any pattern we have to match in the MATCH or MERGE clause
+    '''
+    pattern : relationship_list
+    | node
+    | pattern COMMA pattern
+    '''
+    pass
+    
 
 
 def p_relationship_list(p):  # A Relationship between nodes
