@@ -7,7 +7,8 @@ import ply.yacc as yacc
 
 
 tokens = (
-    "NUMBER", "MATCH",
+    "NUMBER",
+    "MATCH",
     "PLUS",
     "MINUS",
     "COMMA",
@@ -116,13 +117,20 @@ class Expression:
 
 def p_expression(p):
     """expression : value
-    | boolean
+    | boolean_literal
     | node_constraint
     | node
     | relationship_list
     | match
     """
     p[0] = Expression(p[1], getattr(p, "variable_mapping", {}))
+
+
+class Where:
+    """MATCH (node)-(whatever) WHERE constraints"""
+
+    def __init__(self, constraint_list=None):
+        self.constraint_list = constraint_list
 
 
 class Variable:
@@ -238,12 +246,12 @@ def p_value(p):
         raise Exception("huh?")
 
 
-def p_boolean(p):
-    """boolean : TRUE
+def p_boolean_literal(p):
+    """boolean_literal : TRUE
     | FALSE
-    | LPAREN boolean AND boolean RPAREN
-    | LPAREN boolean OR boolean RPAREN
-    | NOT boolean
+    | LPAREN boolean_literal AND boolean_literal RPAREN
+    | LPAREN boolean_literal OR boolean_literal RPAREN
+    | NOT boolean_literal
     """
     if len(p) == 2 and p[1] == "TRUE":
         p[0] = True
@@ -305,33 +313,18 @@ class RelationshipList:
         return ", ".join([str(i) for i in self.relationship_list])
 
 
-class Match:
-    '''MATCH pattern without a WHERE clause'''
-    def __init__(self, pattern):
-        self.pattern = pattern
-
-
 def p_match_clause(p):
-    '''
-    match_clause : MATCH pattern
-    '''
+    """
+    match_clause : MATCH relationship_list
+    """
     return Match(p[2])
 
 
 class Pattern:
-    '''A set of constraints without a WHERE clause'''
+    """A set of constraints without a WHERE clause"""
+
     def __init__(self, pattern_list: list = None):
         self.pattern_list = pattern_list or []
-
-
-def p_pattern(p):  # Any pattern we have to match in the MATCH or MERGE clause
-    '''
-    pattern : relationship_list
-    | node
-    | pattern COMMA pattern
-    '''
-    pass
-    
 
 
 def p_relationship_list(p):  # A Relationship between nodes
@@ -437,18 +430,39 @@ def p_relationship_spec(p):
 
 
 class Match:
-    '''A match'''
+    """A match"""
+
     def __init__(self, relationship_list: list = None):
         self.relationship_list = relationship_list or []
 
     def __repr__(self):
-        out = f'MATCH: {self.relationship_list}'
+        out = f"MATCH: {self.relationship_list}"
         return out
 
 
 def p_match(p):
-    '''match : MATCH relationship_list'''
+    """match : MATCH relationship_list"""
     p[0] = Match(relationship_list=p[2])
+
+
+
+
+def p_where_clause(p):
+    """where_clause : WHERE constraint_list"""
+    p[0] = Where(constraint_list=p[2])
+
+
+class MatchWhere:
+    """MATCH relationship_list WHERE constraints"""
+
+    def __init__(self, pattern=None, where=None):
+        self.pattern = pattern
+        self.where = where
+
+
+def p_match_where(p):
+    """match_where : match where_clause"""
+    p[0] = MatchWhere(pattern=p[1], where=p[2])
 
 
 parser = yacc.yacc()
@@ -477,6 +491,8 @@ print(result)
 result = parser.parse("(a)-->(b)-->(c)<--(d)")
 print(result)
 result = parser.parse("MATCH (a)-->(b)-->(c)<--(d)")
+print(result)
+result = parser.parse("MATCH (a)-->(b)-->(c)<--(d) WHERE a = 1")
 print(result)
 
 if __name__ == "__main__":
